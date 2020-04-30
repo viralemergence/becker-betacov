@@ -12,11 +12,11 @@ library(data.table)
 library(ggtree)
 
 ## load phylogeny
-setwd("~/Dropbox (Personal)/GBatNet")
+setwd("~/Desktop/batcov_gpf")
 tree=readRDS('STFull.rds')
 
 ## load greg matching host taxa
-setwd("~/Dropbox (Personal)/GBatNet")
+setwd("~/Desktop/batcov_gpf")
 data=readRDS('GregPredictions.rds')
 
 ## just bats
@@ -58,7 +58,7 @@ tdata=merge(tdata,btaxa,by='hGenus',all.x=T)
 tdata$taxonomy=with(tdata,paste(hOrder,hFamily,hGenus,unique_name,sep='; '))
 
 ## load in CoV data
-setwd("~/Dropbox (Personal)/GBatNet/Data")
+setwd("~/Desktop/batcov_gpf/Data")
 library(tidyverse)
 read_csv('BatCoV-assoc.csv') %>% filter(origin == 'Anthony') -> batcov
 read_csv('BatCoV-assoc.csv') -> batcov
@@ -216,5 +216,5 @@ hist(set$preds_sarbecovirus)
 set2=set[c('unique_name','betacov','sarbecov','preds_allbetacov','preds_sarbecovirus')]
 
 ## export
-setwd("~/Dropbox (Personal)/GBatNet")
+setwd("~/Desktop/batcov_gpf")
 write.csv(set2,'bat betacov_phylofactor preds.csv')
