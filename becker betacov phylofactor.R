@@ -17,11 +17,20 @@ library(plyr)
 setwd("~/Desktop/cleanbats_betacov/clean data")
 data=read.csv('bat-phylo-traits_clean.csv',header=T)
 
+## load citations
+cites=read.csv('Citations.csv',header=T)
+cites$X=NULL
+cites$clean_hostnames=cites$Pan
+cites$Pan=NULL
+
+## merge
+data=merge(data,cites,by='clean_hostnames',all=T)
+
 ## load bat supertree
 btree=readRDS('bat-supertree_clean.rds')
 
 ## reduce data down to virus, species, taxonomy
-bdata=data[c('clean_hostnames','betacov','sarbecov')]
+bdata=data[c('clean_hostnames','betacov','sarbecov','citations')]
 
 ## get genus
 bdata$genus=sapply(strsplit(as.character(bdata$clean_hostnames),'_'),function(x) x[1])
@@ -97,33 +106,57 @@ taxonomy$taxonomy=as.character(taxonomy$taxonomy)
 set.seed(1)
 pf=gpf(Data=cdata$data,tree=cdata$phy,
        frmla.phylo=betacov~phylo,
-       family=binomial,algorithm='phylo',nfactors=5)
+       family=binomial,algorithm='phylo',nfactors=2)
 keep=HolmProcedure(pf)
 pf.tree(pf,factors=1:keep,size=0.1,layout="circular")$ggplot
 
+## add citations
+set.seed(1)
+cf=gpf(Data=cdata$data,tree=cdata$phy,
+       frmla.phylo=betacov~phylo,
+       family=binomial,algorithm='phylo',nfactors=2,
+       weights=sqrt(cdata$data$citations))
+ckeep=HolmProcedure(cf)
+pf.tree(cf,factors=1:ckeep,size=0.1,layout="circular")$ggplot
+
 ## refit with retained number of significant clades
+set.seed(1)
 pf2=gpf(Data=cdata$data,tree=cdata$phy,
        frmla.phylo=betacov~phylo,
        family=binomial,algorithm='phylo',nfactors=keep)
 
+## same for citation adjustment
+set.seed(1)
+cf2=gpf(Data=cdata$data,tree=cdata$phy,
+        frmla.phylo=betacov~phylo,
+        family=binomial,algorithm='phylo',nfactors=ckeep,
+        weights=sqrt(cdata$data$citations))
+
 ## set key
 setkey(pf2$Data,'Species')
+setkey(cf2$Data,'Species')
 
 ## summarize
 pf.taxa(pf2,taxonomy,factor=1)$group1
+pf.taxa(cf2,taxonomy,factor=1)$group1
 
 ## get clade
-cdata$data$pf_beta=ifelse(cdata$data$clean_hostnames%in%cladeget(pf2,1),'clade','other')
+cdata$data$pf_all=ifelse(cdata$data$clean_hostnames%in%cladeget(pf2,1),'clade','other')
+cdata$data$pf_cite=ifelse(cdata$data$clean_hostnames%in%cladeget(cf2,1),'clade','other')
 
 ## table
-table(cdata$data$pf_beta,cdata$data$betacov)
-prop.table(table(cdata$data$pf_beta,cdata$data$betacov))*100
+prop.table(table(cdata$data$pf_all,cdata$data$betacov))*100
+prop.table(table(cdata$data$pf_cite,cdata$data$betacov))*100
 
 ## make data
 set=cdata$data
 
 ## get predictions
 set$Prediction=predict(pf2,type='response')
+set$Prediction_Cites=predict(cf2,type='response')
+
+## trim
+set=set[c('clean_hostnames','Prediction','Prediction_Cites')]
 
 ## export
 setwd("~/Desktop/becker-betacov")
