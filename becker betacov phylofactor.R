@@ -1,5 +1,6 @@
 ## phylofactor of betacoronavirus host status
 ## danbeck@iu.edu
+## last updated 05/13/2020
 
 ## clean environment & plots
 rm(list=ls()) 
@@ -7,69 +8,83 @@ graphics.off()
 
 ## packages
 library(ape)
-library(phylofactor)
-library(tidyverse)
 library(data.table)
 library(ggtree)
 library(plyr)
+library(phylofactor)
+library(tidyr)
 
-## load clean data
-setwd("~/Desktop/cleanbats_betacov/clean data")
-data=read.csv('bat-phylo-traits_clean.csv',header=T)
+## load master data
+setwd("~/Desktop/virionette/03_interaction_data")
+data=read.csv('virionette.csv',header=T)
+data$tree=gsub(' ','_',data$host_species)
 
-## load citations
-cites=read.csv('Citations.csv',header=T)
-cites$X=NULL
-cites$clean_hostnames=cites$Pan
-cites$Pan=NULL
+## betacovs only
+data=data[which(data$virus_genus=='Betacoronavirus'),]
+data=data.frame(data)
+
+## betacov
+data$betacov=1
+
+## aggregate
+data=data[!duplicated(data$host_species),]
+
+## load mammal supertree
+setwd("~/Desktop/virionette/04_predictors")
+tree=readRDS('Full Supertree.rds')
+
+## data
+tdata=data.frame(tree=tree$tip.label)
 
 ## merge
-data=merge(data,cites,by='clean_hostnames',all=T)
+data=merge(tdata,data,by='tree',all=T)
+rm(tdata)
+
+## fix betacov
+data$betacov=replace_na(data$betacov,0)
 
 ## load bat supertree
 btree=readRDS('bat-supertree_clean.rds')
 
-## reduce data down to virus, species, taxonomy
-bdata=data[c('clean_hostnames','betacov','sarbecov','citations')]
+## get bats
+data$bats=ifelse(data$tree%in%btree$tip.label,'bats','other')
 
-## get genus
-bdata$genus=sapply(strsplit(as.character(bdata$clean_hostnames),'_'),function(x) x[1])
+## clean
+rm(btree)
 
-## load taxonomy
-setwd("~/Desktop/becker-betacov")
-taxa=read.csv('bat taxonomy.csv',header=T)
-taxa$X=NULL
-taxa$hOrder=NULL
-names(taxa)=c('family','genus')
+## load in cites
+cites=read.csv('Citations.csv',header=T)
+cites$X=NULL
+cites$tree=gsub(' ','_',cites$name)
+cites$name=NULL
 
-## merge into bdata
-bdata=merge(bdata,taxa,by='genus',all.x=T)
-rm(taxa)
-
-## fix missing families
-bdata$family=as.character(bdata$family)
-bdata$family2=revalue(bdata$genus,
-                      c('Aproteles'='Pteropodidae',
-                        'Paracoelops'='Hipposideridae'))
-bdata$family=ifelse(is.na(bdata$family),bdata$family2,bdata$family)
-bdata$family2=NULL
-
-## taxa
-bdata$taxonomy=with(bdata,paste(family,genus,clean_hostnames,sep='; '))
+## merge 
+data=merge(data,cites,by='tree')
+rm(cites)
 
 ## merge into phylogeny order
-bdata=bdata[match(btree$tip.label,bdata$clean_hostnames),]
+data=data[match(tree$tip.label,data$tree),]
+
+## fix names
+data$treenames=data$tree
+data$tree=NULL
 
 ## merge with caper
 library(caper)
-cdata=comparative.data(phy=btree,data=bdata,names.col=clean_hostnames,vcv=T,na.omit=F,warn.dropped=T)
+cdata=comparative.data(phy=tree,data=data,names.col=treenames,vcv=T,na.omit=F,warn.dropped=T)
 
 ## add correct names
-cdata$data$clean_hostnames=rownames(cdata$data)
+cdata$data$treenames=rownames(cdata$data)
 cdata$data$Species=rownames(cdata$data)
 
+## sqrt cites
+cdata$data$scites=sqrt(cdata$data$cites)
+
+## subset to bats
+bdata=cdata[which(cdata$data$bats=='bats'),]
+
 ## Holm rejection procedure
-HolmProcedure <- function(pf,FWER=0.05){
+HolmProcedure <- function(pf,FWER=0.5){
   if (pf$models[[1]]$family$family%in%c('gaussian',"Gamma","quasipoisson")){
     pvals <- sapply(pf$models,FUN=function(fit) summary(fit)$coefficients['phyloS','Pr(>|t|)'])
   } else {
@@ -95,69 +110,78 @@ cladeget=function(pf,factor){
   return(spp)
 }
 
-## set taxonomy
-taxonomy=data.frame(cdata$data$taxonomy)
-names(taxonomy)="taxonomy"
-taxonomy$Species=rownames(cdata$data)
-taxonomy=taxonomy[c("Species","taxonomy")]
-taxonomy$taxonomy=as.character(taxonomy$taxonomy)
-
-## gpf
+## bat-only phylofactor, uncorrected
 set.seed(1)
-pf=gpf(Data=cdata$data,tree=cdata$phy,
+bat_pf=gpf(Data=bdata$data,tree=bdata$phy,
        frmla.phylo=betacov~phylo,
-       family=binomial,algorithm='phylo',nfactors=2)
-keep=HolmProcedure(pf)
-pf.tree(pf,factors=1:keep,size=0.1,layout="circular")$ggplot
+       family=binomial,algorithm='phylo',nfactors=3)
+bat_keep=HolmProcedure(bat_pf)
+pf.tree(bat_pf,factors=1:bat_keep,size=0.1,layout="circular")$ggplot
 
-## add citations
+## refit to correct clades
 set.seed(1)
-cf=gpf(Data=cdata$data,tree=cdata$phy,
-       frmla.phylo=betacov~phylo,
-       family=binomial,algorithm='phylo',nfactors=2,
-       weights=sqrt(cdata$data$citations))
-ckeep=HolmProcedure(cf)
-pf.tree(cf,factors=1:ckeep,size=0.1,layout="circular")$ggplot
+bat_pf=gpf(Data=bdata$data,tree=bdata$phy,
+           frmla.phylo=betacov~phylo,
+           family=binomial,algorithm='phylo',nfactors=bat_keep)
 
-## refit with retained number of significant clades
+## bat-only phylofactor, corrected for cites
 set.seed(1)
-pf2=gpf(Data=cdata$data,tree=cdata$phy,
-       frmla.phylo=betacov~phylo,
-       family=binomial,algorithm='phylo',nfactors=keep)
+cbat_pf=gpf(Data=bdata$data,tree=bdata$phy,
+           frmla.phylo=betacov~phylo,
+           family=binomial,algorithm='phylo',nfactors=3,
+           weights=sqrt(bdata$data$cites))
+cbat_keep=HolmProcedure(cbat_pf)
 
-## same for citation adjustment
+## all mammal phylofactor, uncorrected
 set.seed(1)
-cf2=gpf(Data=cdata$data,tree=cdata$phy,
-        frmla.phylo=betacov~phylo,
-        family=binomial,algorithm='phylo',nfactors=ckeep,
-        weights=sqrt(cdata$data$citations))
+mam_pf=gpf(Data=cdata$data,tree=cdata$phy,
+           frmla.phylo=betacov~phylo,
+           family=binomial,algorithm='phylo',nfactors=3)
+mam_keep=HolmProcedure(mam_pf)
+pf.tree(mam_pf,factors=1:mam_keep,size=0.1,layout="circular")$ggplot
 
-## set key
-setkey(pf2$Data,'Species')
-setkey(cf2$Data,'Species')
+## refit to correct clades
+set.seed(1)
+mam_pf=gpf(Data=cdata$data,tree=cdata$phy,
+           frmla.phylo=betacov~phylo,
+           family=binomial,algorithm='phylo',nfactors=mam_keep)
 
-## summarize
-pf.taxa(pf2,taxonomy,factor=1)$group1
-pf.taxa(cf2,taxonomy,factor=1)$group1
+## all mammal phylofactor, corrected for cites
+set.seed(1)
+cmam_pf=gpf(Data=cdata$data,tree=cdata$phy,
+            frmla.phylo=betacov~phylo,
+            family=binomial,algorithm='phylo',nfactors=3,
+            weights=sqrt(cdata$data$cites))
+cmam_keep=HolmProcedure(cmam_pf)
 
-## get clade
-cdata$data$pf_all=ifelse(cdata$data$clean_hostnames%in%cladeget(pf2,1),'clade','other')
-cdata$data$pf_cite=ifelse(cdata$data$clean_hostnames%in%cladeget(cf2,1),'clade','other')
+## BeckerBatsUncorrected.csv
+set=data.frame(host_species=bdata$data$treenames,
+               preds=predict(bat_pf,type='response'))
 
-## table
-prop.table(table(cdata$data$pf_all,cdata$data$betacov))*100
-prop.table(table(cdata$data$pf_cite,cdata$data$betacov))*100
-
-## make data
-set=cdata$data
-
-## get predictions
-set$Prediction=predict(pf2,type='response')
-set$Prediction_Cites=predict(cf2,type='response')
-
-## trim
-set=set[c('clean_hostnames','Prediction','Prediction_Cites')]
-
-## export
+## write
 setwd("~/Desktop/becker-betacov")
-write.csv(set,'PhylofactorPredictions.csv')
+write.csv(set,'BeckerBatsUncorrected.csv')
+
+## BeckerBatsCitations.csv
+set=data.frame(host_species=bdata$data$treenames,
+               preds=ifelse(HolmProcedure(cbat_pf)==0,NA,predict(cbat_pf,type='response')))
+
+## write
+setwd("~/Desktop/becker-betacov")
+write.csv(set,'BeckerBatsCitations.csv')
+
+## BeckerMammalUncorrected.csv
+set=data.frame(host_species=cdata$data$treenames,
+               preds=predict(mam_pf,type='response'))
+
+## write
+setwd("~/Desktop/becker-betacov")
+write.csv(set,'BeckerMammalUncorrected.csv')
+
+## BeckerMammalCitations.csv
+set=data.frame(host_species=cdata$data$treenames,
+               preds=ifelse(HolmProcedure(cmam_pf)==0,NA,predict(cmam_pf,type='response')))
+
+## write
+setwd("~/Desktop/becker-betacov")
+write.csv(set,'BeckerMammalCitations.csv')
