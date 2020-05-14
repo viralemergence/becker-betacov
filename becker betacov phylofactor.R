@@ -59,8 +59,9 @@ cites$tree=gsub(' ','_',cites$name)
 cites$name=NULL
 
 ## merge 
-data=merge(data,cites,by='tree')
+data=merge(data,cites,by='tree',all.x=T)
 rm(cites)
+table(is.na(data$cites))
 
 ## merge into phylogeny order
 data=data[match(tree$tip.label,data$tree),]
@@ -84,7 +85,7 @@ cdata$data$scites=sqrt(cdata$data$cites)
 bdata=cdata[which(cdata$data$bats=='bats'),]
 
 ## Holm rejection procedure
-HolmProcedure <- function(pf,FWER=0.5){
+HolmProcedure <- function(pf,FWER=0.05){
   if (pf$models[[1]]$family$family%in%c('gaussian',"Gamma","quasipoisson")){
     pvals <- sapply(pf$models,FUN=function(fit) summary(fit)$coefficients['phyloS','Pr(>|t|)'])
   } else {
@@ -131,6 +132,14 @@ cbat_pf=gpf(Data=bdata$data,tree=bdata$phy,
            family=binomial,algorithm='phylo',nfactors=3,
            weights=sqrt(bdata$data$cites))
 cbat_keep=HolmProcedure(cbat_pf)
+pf.tree(cbat_pf,factors=1:cbat_keep,size=0.1,layout="circular")$ggplot
+
+## refit to correct clades
+set.seed(1)
+cbat_pf=gpf(Data=bdata$data,tree=bdata$phy,
+           frmla.phylo=betacov~phylo,
+           family=binomial,algorithm='phylo',nfactors=cbat_keep,
+           weights=sqrt(bdata$data$cites))
 
 ## all mammal phylofactor, uncorrected
 set.seed(1)
@@ -185,3 +194,5 @@ set=data.frame(host_species=cdata$data$treenames,
 ## write
 setwd("~/Desktop/becker-betacov")
 write.csv(set,'BeckerMammalCitations.csv')
+
+## make phylofactor figure
