@@ -1,6 +1,6 @@
 ## phylofactor of betacoronavirus host status
 ## danbeck@iu.edu
-## last updated 05/13/2020
+## last updated 05/17/2020
 
 ## clean environment & plots
 rm(list=ls()) 
@@ -56,9 +56,10 @@ setwd("~/Desktop")
 write.csv(bb,'bats vs other.csv')
 
 ## clean
-rm(btree)
+rm(btree,bb)
 
 ## load in cites
+setwd("~/Desktop/virionette/04_predictors")
 cites=read.csv('Citations.csv',header=T)
 cites$X=NULL
 cites$tree=gsub(' ','_',cites$name)
@@ -69,12 +70,19 @@ data=merge(data,cites,by='tree',all.x=T)
 rm(cites)
 table(is.na(data$cites))
 
-## merge into phylogeny order
-data=data[match(tree$tip.label,data$tree),]
-
 ## fix names
 data$treenames=data$tree
 data$tree=NULL
+
+## trim
+data=data[c('treenames','betacov','cites','bats')]
+
+## remove humans
+data=data[-which(data$treenames=='Homo_sapiens'),]
+tree=drop.tip(tree,'Homo_sapiens')
+
+## merge into phylogeny order
+data=data[match(tree$tip.label,data$treenames),]
 
 ## merge with caper
 library(caper)
@@ -121,19 +129,93 @@ cladeget=function(pf,factor){
   return(spp)
 }
 
+## summarize pf object 
+pfsum=function(pf){
+  
+  ## get formula
+  chars=as.character(pf$frmla.phylo)[-1]
+  
+  ## response
+  resp=chars[1]
+  
+  ## holm
+  hp=HolmProcedure(pf)
+  
+  ## save model
+  model=chars[2]
+  
+  ## set key
+  setkey(pf$Data,'Species')
+  
+  ## make data
+  dat=data.frame(pf$Data)
+  
+  ## make clade columns in data
+  for(i in 1:hp){
+    
+    dat[,paste0(resp,'_pf',i)]=ifelse(dat$treename%in%cladeget(pf,i),'factor','other')
+    
+  }
+  
+  ## make data frame to store taxa name, response, mean, and other
+  results=data.frame(matrix(ncol=5, nrow = hp))
+  colnames(results)=c('factor','tips','node',"clade",'other')
+  
+  ## loop
+  for(i in 1:hp){
+    
+    # save
+    results[i,'factor']=i
+    
+    ## get node
+    tips=cladeget(pf,i)
+    node=ggtree::MRCA(pf$tree,tips)
+    results[i,'tips']=length(tips)
+    results[i,'node']=ifelse(is.null(node) & length(tips)==1,'species',
+                             ifelse(is.null(node) & length(tips)!=1,NA,node))
+    
+    ## get means
+    ms=(tapply(dat[,resp],dat[,paste0(resp,'_pf',i)],mean))
+    
+    ## add in
+    results[i,'clade']=ms['factor']
+    results[i,'other']=ms['other']
+    
+  }
+  
+  ## return
+  return(list(set=dat,results=results))
+}
+
+## fix palette
+AlberPalettes <- c("YlGnBu","Reds","BuPu", "PiYG")
+AlberColours <- sapply(AlberPalettes, function(a) RColorBrewer::brewer.pal(5, a)[4])
+afun=function(x){
+  a=AlberColours[1:x]
+  return(a)
+}
+
+## make low and high
+pcols=afun(2)
+
 ## bat-only phylofactor, uncorrected
 set.seed(1)
 bat_pf=gpf(Data=bdata$data,tree=bdata$phy,
        frmla.phylo=betacov~phylo,
        family=binomial,algorithm='phylo',nfactors=3)
-bat_keep=HolmProcedure(bat_pf)
-pf.tree(bat_pf,factors=1:bat_keep,size=0.1,layout="circular")$ggplot
+
+## results
+bat_results=pfsum(bat_pf)
+
+## split data from results
+bat_data=bat_results$set
+bat_results=bat_results$results
 
 ## refit to correct clades
 set.seed(1)
 bat_pf=gpf(Data=bdata$data,tree=bdata$phy,
            frmla.phylo=betacov~phylo,
-           family=binomial,algorithm='phylo',nfactors=bat_keep)
+           family=binomial,algorithm='phylo',nfactors=nrow(bat_results))
 
 ## bat-only phylofactor, corrected for cites
 set.seed(1)
@@ -141,56 +223,48 @@ cbat_pf=gpf(Data=bdata$data,tree=bdata$phy,
            frmla.phylo=betacov~phylo,
            family=binomial,algorithm='phylo',nfactors=3,
            weights=sqrt(bdata$data$cites))
-cbat_keep=HolmProcedure(cbat_pf)
-pf.tree(cbat_pf,factors=1:cbat_keep,size=0.1,layout="circular")$ggplot
+
+## results
+cbat_results=pfsum(cbat_pf)
+
+## split data from results
+cbat_data=cbat_results$set
+cbat_results=cbat_results$results
 
 ## refit to correct clades
 set.seed(1)
 cbat_pf=gpf(Data=bdata$data,tree=bdata$phy,
            frmla.phylo=betacov~phylo,
-           family=binomial,algorithm='phylo',nfactors=cbat_keep,
-           weights=sqrt(bdata$data$cites))
+           family=binomial,algorithm='phylo',nfactors=nrow(cbat_results))
+
+## make mammal besides bat
+mdata=cdata[-(which(cdata$data$bats=='bats')),]
 
 ## all mammal phylofactor, uncorrected
 set.seed(1)
-mam_pf=gpf(Data=cdata$data,tree=cdata$phy,
+mam_pf=gpf(Data=mdata$data,tree=mdata$phy,
            frmla.phylo=betacov~phylo,
            family=binomial,algorithm='phylo',nfactors=3)
-mam_keep=HolmProcedure(mam_pf)
-pf.tree(mam_pf,factors=1:mam_keep,size=0.1,layout="circular")$ggplot
+
+## results
+mam_results=pfsum(mam_pf)
+
+## split data from results
+mam_data=mam_results$set
+mam_results=mam_results$results
 
 ## refit to correct clades
 set.seed(1)
-mam_pf=gpf(Data=cdata$data,tree=cdata$phy,
+mam_pf=gpf(Data=mdata$data,tree=mdata$phy,
            frmla.phylo=betacov~phylo,
-           family=binomial,algorithm='phylo',nfactors=mam_keep)
+           family=binomial,algorithm='phylo',nfactors=nrow(mam_results))
 
 ## all mammal phylofactor, corrected for cites
 set.seed(1)
-cmam_pf=gpf(Data=cdata$data,tree=cdata$phy,
+cmam_pf=gpf(Data=mdata$data,tree=mdata$phy,
             frmla.phylo=betacov~phylo,
             family=binomial,algorithm='phylo',nfactors=3,
-            weights=sqrt(cdata$data$cites))
-cmam_keep=HolmProcedure(cmam_pf)
-
-## load in taxonomy
-setwd("~/Desktop/becker-betacov")
-taxonomy=read.csv('mammal taxonomy.csv',header=T)
-taxonomy$X=NULL
-taxonomy$Sp=NULL
-taxonomy=taxonomy[!duplicated(taxonomy$hGenus),]
-
-## get tree data
-tdata=cdata$data
-tdata=tdata[c('treenames')]
-
-## get genus
-tdata$hGenus=sapply(strsplit(tdata$treenames,'_'),function(x) x[1])
-
-## merge
-test=merge(tdata,taxonomy,all.x=T,by='hGenus')
-a=test[is.na(test$hFamily),]
-length(unique(a$hGenus))
+            weights=sqrt(mdata$data$cites))
 
 ## BeckerBatsUncorrected.csv
 set=data.frame(host_species=bdata$data$treenames,
@@ -209,7 +283,7 @@ setwd("~/Desktop/becker-betacov")
 write.csv(set,'BeckerBatsCitations.csv')
 
 ## BeckerMammalUncorrected.csv
-set=data.frame(host_species=cdata$data$treenames,
+set=data.frame(host_species=mdata$data$treenames,
                preds=predict(mam_pf,type='response'))
 
 ## write
@@ -217,23 +291,18 @@ setwd("~/Desktop/becker-betacov")
 write.csv(set,'BeckerMammalUncorrected.csv')
 
 ## BeckerMammalCitations.csv
-set=data.frame(host_species=cdata$data$treenames,
+set=data.frame(host_species=mdata$data$treenames,
                preds=ifelse(HolmProcedure(cmam_pf)==0,NA,predict(cmam_pf,type='response')))
 
 ## write
 setwd("~/Desktop/becker-betacov")
 write.csv(set,'BeckerMammalCitations.csv')
 
-## combine tree and data
-library(treeio)
-all_tree=treeio::full_join(as.treedata(cdata$phy),cdata$data,by="label")
-bat_tree=treeio::full_join(as.treedata(bdata$phy),bdata$data,by="label")
-
 ## set x max
 plus=5
 
 ## make bat base
-bat_base=ggtree(bat_tree,size=0.1,layout="fan")
+bat_base=ggtree(bdata$phy,size=0.1,layout="fan")
 bat_base=bat_base$data
 
 ## tips only
@@ -243,12 +312,12 @@ bat_base=bat_base[which(bat_base$isTip==T),]
 bat_preds=data.frame(x=bat_base$x,
                  y=bat_base$y,
                  yend=bat_base$y,
-                 xend=ifelse(bat_base$betacov==0,unique(bat_base$x)[1],
+                 xend=ifelse(bdata$data$betacov==0,unique(bat_base$x)[1],
                              unique(bat_base$x)[1]+plus),
-                 betafac=factor(bat_base$betacov))
+                 betafac=factor(bdata$data$betacov))
 
 ## repeat for mammals
-mam_base=ggtree(all_tree,size=0.1,layout="fan")
+mam_base=ggtree(mdata$phy,size=0.1,layout="fan")
 mam_base=mam_base$data
 mam_base=mam_base[which(mam_base$isTip==T),]
 
@@ -256,9 +325,9 @@ mam_base=mam_base[which(mam_base$isTip==T),]
 mam_preds=data.frame(x=mam_base$x,
                      y=mam_base$y,
                      yend=mam_base$y,
-                     xend=ifelse(mam_base$betacov==0,unique(mam_base$x)[1],
+                     xend=ifelse(mdata$data$betacov==0,unique(mam_base$x)[1],
                                  unique(mam_base$x)[1]+plus*2),
-                     betafac=factor(mam_base$betacov))
+                     betafac=factor(mdata$data$betacov))
 
 ## make phylofactor figure
 library(patchwork)
@@ -266,56 +335,124 @@ library(patchwork)
 ## specify lines
 lwd=0.1
 
-## fix palette
-AlberPalettes <- c("YlGnBu","Reds","BuPu", "PiYG")
-AlberColours <- sapply(AlberPalettes, function(a) RColorBrewer::brewer.pal(5, a)[4])
-afun=function(x){
-  a=AlberColours[1:x]
-  return(a)
+## bat raw
+gg=ggtree(bdata$phy,
+          size=0.1,
+          layout='circular')
+
+## add clades
+for(i in 1:nrow(bat_results)){
+  
+  gg=gg+
+    geom_hilight(node=bat_results$node[i],
+                 alpha=0.5,
+                 fill=ifelse(bat_results$clade<
+                               bat_results$other,pcols[1],pcols[2])[i])+
+    geom_cladelabel(node=bat_results$node[i],
+                    label=bat_results$factor[i],
+                    offset=plus*2,
+                    offset.text=plus*2)
 }
 
-## bat raw
-p1=pf.tree(bat_pf,factors=1:bat_keep,size=lwd,color.fcn=afun,
-           layout="circular",alphas=0.5)$ggplot+
-  ggtitle('bat phylofactor')+
+## visualize
+p1=gg+
+  
+  ## title
+  ggtitle('bats')+
+  theme(plot.title = element_text(hjust = 0.5))+
+
+  ## add predictions
   geom_segment(data=bat_preds,
                aes(x=x,y=y,xend=xend,yend=yend,
                    colour=betafac),size=0.25)+
-  theme(plot.title = element_text(hjust = 0.5))+
-  scale_colour_manual(values=c('white','black'))
+  scale_colour_manual(values=c('white','black'))+
+  guides(colour=F)
 
 ## bat citations
-p2=pf.tree(cbat_pf,factors=1:cbat_keep,size=lwd,color.fcn=afun,
-           layout="circular",alphas=0.5)$ggplot+
-  ggtitle('bat phylofactor (with citations)')+
+gg=ggtree(bdata$phy,
+          size=0.1,
+          layout='circular')
+
+## add clades
+for(i in 1:nrow(cbat_results)){
+  
+  gg=gg+
+    geom_hilight(node=cbat_results$node[i],
+                 alpha=0.5,
+                 fill=ifelse(cbat_results$clade<
+                               cbat_results$other,pcols[1],pcols[2])[i])+
+    geom_cladelabel(node=cbat_results$node[i],
+                    label=cbat_results$factor[i],
+                    offset=plus*2,
+                    offset.text=plus*2)
+}
+
+## visualize
+p2=gg+
+  
+  ## title
+  ggtitle('bats (with citations)')+
+  theme(plot.title = element_text(hjust = 0.5))+
+  
+  ## add predictions
   geom_segment(data=bat_preds,
                aes(x=x,y=y,xend=xend,yend=yend,
                    colour=betafac),size=0.25)+
-  theme(plot.title = element_text(hjust = 0.5))+
-  scale_colour_manual(values=c('white','black'))
+  scale_colour_manual(values=c('white','black'))+
+  guides(colour=F)
 
 ## mammal raw
-p3=pf.tree(mam_pf,factors=1:mam_keep,size=lwd/4,color.fcn=afun,
-           layout="circular",alphas=rep(0.5,mam_keep))$ggplot+
-  ggtitle('mammal phylofactor')+
+gg=ggtree(mdata$phy,
+          size=0.1,
+          layout='circular')
+
+## add clades
+for(i in 1:nrow(mam_results)){
+  
+  gg=gg+
+    geom_hilight(node=mam_results$node[i],
+                 alpha=0.5,
+                 fill=ifelse(mam_results$clade<
+                               mam_results$other,pcols[1],pcols[2])[i])+
+    geom_cladelabel(node=mam_results$node[i],
+                    label=mam_results$factor[i],
+                    offset=plus*2,
+                    offset.text=plus*2)
+}
+
+## visualize
+p3=gg+
+  
+  ## title
+  ggtitle('mammals')+
+  theme(plot.title = element_text(hjust = 0.5))+
+  
+  ## add predictions
   geom_segment(data=mam_preds,
                aes(x=x,y=y,xend=xend,yend=yend,
                    colour=betafac),size=0.25)+
-  theme(plot.title = element_text(hjust = 0.5))+
-  scale_colour_manual(values=c('white','black'))
+  scale_colour_manual(values=c('white','black'))+
+  guides(colour=F)
 
 ## mammal citations
-p4=ggtree(cdata$phy,size=lwd/2,layout="circular")+
-  ggtitle('mammal phylofactor (with citations)')+
+gg=ggtree(mdata$phy,
+          size=0.1,
+          layout='circular')
+p4=gg+
+  
+  ## title
+  ggtitle('mammals (with citations)')+
+  theme(plot.title = element_text(hjust = 0.5))+
+  
+  ## add predictions
   geom_segment(data=mam_preds,
                aes(x=x,y=y,xend=xend,yend=yend,
                    colour=betafac),size=0.25)+
-  theme(plot.title = element_text(hjust = 0.5))+
-  scale_colour_manual(values=c('white','black'))
+  scale_colour_manual(values=c('white','black'))+
+  guides(colour=F)
 
 ## combine
-setwd("~/Dropbox (Personal)/GBatNet/prediction phylo")
+setwd("~/Desktop/becker-betacov")
 png("phylo betacov.png",width=7,height=7,units="in",res=300)
 p1+p2+p3+p4
 dev.off()
-
